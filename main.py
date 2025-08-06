@@ -32,154 +32,11 @@ class ConfigManager:
         return []
 
 
-class ProcessManager(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.config_manager = ConfigManager()
-        self.current_processes = []
-        self.saved_processes = set()
-        self.init_ui()
-        self.refresh_processes()
-        
-    def init_ui(self):
-        self.setWindowTitle("进程管理工具")
-        self.setGeometry(100, 100, 500, 300)
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-        
-        layout = QVBoxLayout(self)
-        
-        # 状态显示
-        self.status_label = QLabel("正在扫描进程...")
-        layout.addWidget(self.status_label)
-        
-        # 按钮区域
-        button_layout = QHBoxLayout()
-        
-        self.save_btn = QPushButton("💾 保存当前进程列表")
-        self.save_btn.clicked.connect(self.save_current_processes)
-        self.save_btn.setStyleSheet("background-color: #28a745; color: white; padding: 10px;")
-        button_layout.addWidget(self.save_btn)
-        
-        self.kill_btn = QPushButton("🗑️ 关闭其他进程")
-        self.kill_btn.clicked.connect(self.kill_other_processes)
-        self.kill_btn.setStyleSheet("background-color: #dc3545; color: white; padding: 10px;")
-        button_layout.addWidget(self.kill_btn)
-        
-        layout.addLayout(button_layout)
-        
-        # 日志区域
-        self.log_text = QTextEdit()
-        self.log_text.setMaximumHeight(150)
-        self.log_text.setReadOnly(True)
-        layout.addWidget(QLabel("操作日志:"))
-        layout.addWidget(self.log_text)
-        
-    def refresh_processes(self):
-        try:
-            result = subprocess.run(['tasklist', '/FO', 'CSV', '/NH'], 
-                                  capture_output=True, text=True, encoding='gbk')
-            
-            if result.returncode == 0:
-                processes = []
-                for line in result.stdout.strip().split('\n'):
-                    if line.strip():
-                        parts = line.strip('"').split('","')
-                        if len(parts) >= 4:
-                            process_info = {
-                                'name': parts[0].strip('"'),
-                                'memory': parts[3].strip('"')
-                            }
-                            processes.append(process_info)
-                
-                # 合并相同名称的进程
-                self.current_processes = self.merge_processes(processes)
-                self.update_status()
-                
-        except Exception as e:
-            self.log_text.append(f"刷新进程列表失败: {e}")
-    
-    def merge_processes(self, processes):
-        process_groups = {}
-        
-        for process in processes:
-            name = process['name']
-            if name not in process_groups:
-                process_groups[name] = {'count': 1, 'name': name}
-            else:
-                process_groups[name]['count'] += 1
-        
-        merged = []
-        for name, info in process_groups.items():
-            if info['count'] > 1:
-                display_name = f"{name} ({info['count']})"
-            else:
-                display_name = name
-            merged.append({'name': display_name, 'original_name': name})
-        
-        return merged
-    
-    def update_status(self):
-        self.status_label.setText(f"当前进程数: {len(self.current_processes)}")
-    
-    def save_current_processes(self):
-        if not self.current_processes:
-            QMessageBox.warning(self, "警告", "没有可保存的进程！")
-            return
-        
-        process_names = [p['original_name'] for p in self.current_processes]
-        
-        if self.config_manager.save_processes(process_names):
-            self.saved_processes = set(process_names)
-            self.log_text.append("✅ 进程列表已保存到 config.yaml")
-            QMessageBox.information(self, "成功", "进程列表已保存！")
-        else:
-            self.log_text.append("❌ 保存进程列表失败")
-    
-    def kill_other_processes(self):
-        # 重新读取config.yaml文件
-        saved_processes_list = self.config_manager.load_processes()
-        if not saved_processes_list:
-            QMessageBox.warning(self, "警告", "config.yaml文件不存在或为空，请先保存进程列表！")
-            return
-        
-        self.saved_processes = set(saved_processes_list)
-        self.log_text.append(f"📖 从config.yaml加载了 {len(self.saved_processes)} 个保存的进程")
-        
-        current_names = {p['original_name'] for p in self.current_processes}
-        to_kill = current_names - self.saved_processes
-        
-        if not to_kill:
-            QMessageBox.information(self, "提示", "没有需要关闭的进程！")
-            return
-        
-        reply = QMessageBox.question(
-            self, "确认操作",
-            f"确定要关闭以下 {len(to_kill)} 个进程吗？\n" + 
-            "\n".join(list(to_kill)[:10]),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            for process_name in to_kill:
-                try:
-                    result = subprocess.run(['taskkill', '/IM', process_name, '/F'],
-                                          capture_output=True, text=True, encoding='gbk')
-                    
-                    success = result.returncode == 0
-                    self.log_text.append(f"[{'✓' if success else '✗'}] {process_name}")
-                    
-                except Exception as e:
-                    self.log_text.append(f"[✗] {process_name}: 错误 - {str(e)}")
-            
-            self.log_text.append("批量关闭操作完成！")
-            self.refresh_processes()
-
-
 class SystemTrayApp(QApplication):
     def __init__(self, argv):
         super().__init__(argv)
         self.tray_icon = None
-        self.process_manager = None
+        self.config_manager = ConfigManager()
         self.init_tray()
         
     def init_tray(self):
@@ -188,7 +45,12 @@ class SystemTrayApp(QApplication):
         menu = QMenu()
         
         save_action = menu.addAction("💾 保存当前进程列表")
-        save_action.triggered.connect(self.show_process_manager)
+        save_action.triggered.connect(self.save_current_processes)
+        
+        menu.addSeparator()
+        
+        edit_action = menu.addAction("📝 编辑进程列表")
+        edit_action.triggered.connect(self.edit_process_list)
         
         menu.addSeparator()
         
@@ -204,20 +66,125 @@ class SystemTrayApp(QApplication):
         self.tray_icon.setToolTip("进程管理工具")
         self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
         self.tray_icon.show()
+    
+    def edit_process_list(self):
+        """用记事本打开config.yaml文件进行编辑"""
+        try:
+            if os.path.exists(self.config_manager.config_file):
+                subprocess.Popen(['notepad.exe', self.config_manager.config_file])
+                self.tray_icon.showMessage("编辑进程列表", "已用记事本打开 config.yaml 文件", QSystemTrayIcon.MessageIcon.Information, 2000)
+            else:
+                self.tray_icon.showMessage("文件不存在", "config.yaml 文件不存在，请先保存进程列表", QSystemTrayIcon.MessageIcon.Warning, 3000)
+        except Exception as e:
+            self.tray_icon.showMessage("打开失败", f"无法打开文件: {str(e)}", QSystemTrayIcon.MessageIcon.Critical, 3000)
+    
+    def get_current_processes(self):
+        """获取当前进程列表"""
+        try:
+            result = subprocess.run(['tasklist', '/FO', 'CSV', '/NH'], 
+                                  capture_output=True, text=True, encoding='gbk')
+            
+            if result.returncode == 0:
+                processes = []
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        parts = line.strip('"').split('","')
+                        if len(parts) >= 1:
+                            name = parts[0].strip('"')
+                            processes.append({'name': name})
+                
+                return self.merge_processes(processes)
+                
+        except Exception as e:
+            print(f"获取进程列表失败: {e}")
+            return []
         
-    def show_process_manager(self):
-        if not self.process_manager:
-            self.process_manager = ProcessManager()
+        return []
+    
+    def merge_processes(self, processes):
+        """合并相同名称的进程"""
+        process_groups = {}
         
-        self.process_manager.show()
-        self.process_manager.raise_()
-        self.process_manager.activateWindow()
+        for process in processes:
+            name = process['name']
+            if name not in process_groups:
+                process_groups[name] = {
+                    'count': 1, 
+                    'name': name
+                }
+            else:
+                process_groups[name]['count'] += 1
+        
+        merged = []
+        for name, info in process_groups.items():
+            if info['count'] > 1:
+                display_name = f"{name} ({info['count']})"
+            else:
+                display_name = name
+            merged.append({
+                'name': display_name, 
+                'original_name': name
+            })
+        
+        return merged
+    
+    def save_current_processes(self):
+        """保存当前进程列表"""
+        current_processes = self.get_current_processes()
+        
+        if not current_processes:
+            self.tray_icon.showMessage("保存失败", "没有可保存的进程！", QSystemTrayIcon.MessageIcon.Warning, 3000)
+            return
+        
+        process_names = [p['original_name'] for p in current_processes]
+        
+        if self.config_manager.save_processes(process_names):
+            self.tray_icon.showMessage(
+                "保存成功", 
+                f"已保存 {len(process_names)} 个进程到 config.yaml", 
+                QSystemTrayIcon.MessageIcon.Information, 
+                3000
+            )
+        else:
+            self.tray_icon.showMessage("保存失败", "保存进程列表失败", QSystemTrayIcon.MessageIcon.Critical, 3000)
     
     def kill_other_processes(self):
-        if not self.process_manager:
-            self.process_manager = ProcessManager()
+        """关闭其他进程"""
+        saved_processes_list = self.config_manager.load_processes()
+        if not saved_processes_list:
+            self.tray_icon.showMessage("警告", "config.yaml文件不存在或为空，请先保存进程列表！", QSystemTrayIcon.MessageIcon.Warning, 3000)
+            return
         
-        self.process_manager.kill_other_processes()
+        saved_processes = set(saved_processes_list)
+        current_processes = self.get_current_processes()
+        current_names = {p['original_name'] for p in current_processes}
+        to_kill = current_names - saved_processes
+        
+        if not to_kill:
+            self.tray_icon.showMessage("提示", "没有需要关闭的进程！", QSystemTrayIcon.MessageIcon.Information, 3000)
+            return
+        
+        reply = QMessageBox.question(
+            None, "确认操作",
+            f"确定要关闭以下 {len(to_kill)} 个进程吗？\n" + 
+            "\n".join(list(to_kill)[:10]),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            success_count = 0
+            for process_name in to_kill:
+                try:
+                    result = subprocess.run(['taskkill', '/IM', process_name, '/F'],
+                                          capture_output=True, text=True, encoding='gbk')
+                    
+                    if result.returncode == 0:
+                        success_count += 1
+                    
+                except Exception as e:
+                    pass
+            
+            self.tray_icon.showMessage("操作完成", f"成功关闭 {success_count}/{len(to_kill)} 个进程", QSystemTrayIcon.MessageIcon.Information, 3000)
 
 
 def main():
