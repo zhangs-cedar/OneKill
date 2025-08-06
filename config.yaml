@@ -35,7 +35,6 @@ saved_processes:
 - ctfmon.exe
 - SecurityHealthService.exe
 - taskhostw.exe
-- Cursor.exe
 - ShellHost.exe
 - sihost.exe
 - explorer.exe
@@ -53,10 +52,10 @@ saved_processes:
 - HPAudioAnalytics.exe
 - HotKeyServiceUWP.exe
 - LanWlanWwanSwitchingServiceUWP.exe
-- backgroundTaskHost.exe
 - ApplicationFrameHost.exe
 - SystemSettings.exe
-- audiodg.exe
-- 语雀.exe
+- smartscreen.exe
+- chrome.exe
+- Cursor.exe
 - python.exe
 - tasklist.exe
