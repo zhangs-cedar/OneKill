@@ -3,6 +3,10 @@ import subprocess
 import yaml
 import os
 import time
+
+# Windows 特定的导入
+if sys.platform == 'win32':
+    import subprocess
 from PyQt6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QStyle, 
     QMessageBox
@@ -47,7 +51,8 @@ class ProcessManager:
         """获取当前进程列表"""
         try:
             result = subprocess.run(['tasklist', '/FO', 'CSV', '/NH'], 
-                                  capture_output=True, text=True, encoding='gbk')
+                                  capture_output=True, text=True, encoding='gbk',
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
             
             if result.returncode == 0:
                 processes = set()
@@ -93,14 +98,16 @@ class ProcessManager:
         try:
             # 使用taskkill强制关闭进程树
             result = subprocess.run(['taskkill', '/IM', process_name, '/F', '/T'],
-                                  capture_output=True, text=True, encoding='gbk')
+                                  capture_output=True, text=True, encoding='gbk',
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
             
             if result.returncode == 0:
                 return True
             
             # 如果taskkill失败，尝试用wmic强制终止
             wmic_result = subprocess.run(['wmic', 'process', 'where', f'name="{process_name}"', 'call', 'terminate'],
-                                       capture_output=True, text=True, encoding='gbk')
+                                       capture_output=True, text=True, encoding='gbk',
+                                       creationflags=subprocess.CREATE_NO_WINDOW)
             
             return wmic_result.returncode == 0
             

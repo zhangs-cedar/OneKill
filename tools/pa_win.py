@@ -82,8 +82,12 @@ def main():
             '--onefile',
             '--output-dir=' + str(dist_dir),
             '--output-filename=OneKill.exe',
+            '--windows-icon-from-ico=' + str(project_root / 'icon.ico') if (project_root / 'icon.ico').exists() else '',
             str(main_py)
         ]
+        
+        # 移除空字符串参数
+        cmd = [arg for arg in cmd if arg]
 
         run_cmd(cmd)
 
