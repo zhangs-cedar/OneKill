@@ -57,6 +57,9 @@ class SystemTrayApp(QApplication):
         kill_action = menu.addAction("🗑️ 关闭其他进程")
         kill_action.triggered.connect(self.kill_other_processes)
         
+        force_kill_action = menu.addAction("💀 强制关闭其他进程")
+        force_kill_action.triggered.connect(self.force_kill_other_processes)
+        
         menu.addSeparator()
         
         quit_action = menu.addAction("退出")
@@ -156,35 +159,138 @@ class SystemTrayApp(QApplication):
             return
         
         saved_processes = set(saved_processes_list)
+        
+        # 第一次关闭
+        first_kill_result = self._kill_processes_once(saved_processes, show_confirm=True)
+        
+        if first_kill_result['total_killed'] == 0:
+            self.tray_icon.showMessage("提示", "没有需要关闭的进程！", QSystemTrayIcon.MessageIcon.Information, 3000)
+            return
+        
+        # 等待2秒让进程完全关闭
+        import time
+        time.sleep(2)
+        
+        # 第二次检查并关闭新产生的进程（不显示确认对话框）
+        second_kill_result = self._kill_processes_once(saved_processes, show_confirm=False)
+        
+        # 显示结果
+        total_killed = first_kill_result['total_killed'] + second_kill_result['total_killed']
+        total_attempted = first_kill_result['total_attempted']
+        
+        message = f"操作完成：共关闭 {total_killed} 个进程"
+        if second_kill_result['total_killed'] > 0:
+            message += f"\n其中 {second_kill_result['total_killed']} 个是重新启动的进程"
+        
+        self.tray_icon.showMessage("操作完成", message, QSystemTrayIcon.MessageIcon.Information, 5000)
+    
+    def _kill_processes_once(self, saved_processes, show_confirm=True):
+        """执行一次进程关闭操作"""
         current_processes = self.get_current_processes()
         current_names = {p['original_name'] for p in current_processes}
         to_kill = current_names - saved_processes
         
         if not to_kill:
-            self.tray_icon.showMessage("提示", "没有需要关闭的进程！", QSystemTrayIcon.MessageIcon.Information, 3000)
+            return {'total_killed': 0, 'total_attempted': 0}
+        
+        # 只在第一次显示确认对话框
+        if show_confirm:
+            reply = QMessageBox.question(
+                None, "确认操作",
+                f"确定要关闭以下 {len(to_kill)} 个进程吗？\n" + 
+                "\n".join(list(to_kill)[:10]),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply != QMessageBox.StandardButton.Yes:
+                return {'total_killed': 0, 'total_attempted': len(to_kill)}
+        
+        success_count = 0
+        for process_name in to_kill:
+            try:
+                result = subprocess.run(['taskkill', '/IM', process_name, '/F'],
+                                      capture_output=True, text=True, encoding='gbk')
+                
+                if result.returncode == 0:
+                    success_count += 1
+                
+            except Exception as e:
+                pass
+        
+        return {'total_killed': success_count, 'total_attempted': len(to_kill)}
+    
+    def force_kill_other_processes(self):
+        """强制关闭其他进程（多次重试）"""
+        saved_processes_list = self.config_manager.load_processes()
+        if not saved_processes_list:
+            self.tray_icon.showMessage("警告", "config.yaml文件不存在或为空，请先保存进程列表！", QSystemTrayIcon.MessageIcon.Warning, 3000)
             return
         
+        saved_processes = set(saved_processes_list)
+        
+        # 执行多次关闭，每次间隔2秒
+        total_killed = 0
+        rounds = 3  # 最多执行3轮
+        
+        for round_num in range(rounds):
+            result = self._force_kill_processes_once(saved_processes, round_num + 1)
+            total_killed += result['total_killed']
+            
+            if result['total_killed'] == 0:
+                break
+            
+            # 等待2秒后继续下一轮
+            if round_num < rounds - 1:
+                import time
+                time.sleep(2)
+        
+        # 显示结果
+        message = f"强制关闭完成：共关闭 {total_killed} 个进程"
+        if rounds > 1:
+            message += f"\n执行了 {rounds} 轮检查"
+        
+        self.tray_icon.showMessage("强制关闭完成", message, QSystemTrayIcon.MessageIcon.Information, 5000)
+    
+    def _force_kill_processes_once(self, saved_processes, round_num):
+        """执行一次强制进程关闭操作"""
+        current_processes = self.get_current_processes()
+        current_names = {p['original_name'] for p in current_processes}
+        to_kill = current_names - saved_processes
+        
+        if not to_kill:
+            return {'total_killed': 0, 'total_attempted': 0}
+        
+        # 显示确认对话框
         reply = QMessageBox.question(
-            None, "确认操作",
-            f"确定要关闭以下 {len(to_kill)} 个进程吗？\n" + 
+            None, f"确认第{round_num}轮操作",
+            f"第{round_num}轮：发现 {len(to_kill)} 个需要关闭的进程\n" + 
             "\n".join(list(to_kill)[:10]),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
-        if reply == QMessageBox.StandardButton.Yes:
-            success_count = 0
-            for process_name in to_kill:
-                try:
-                    result = subprocess.run(['taskkill', '/IM', process_name, '/F'],
-                                          capture_output=True, text=True, encoding='gbk')
-                    
-                    if result.returncode == 0:
+        if reply != QMessageBox.StandardButton.Yes:
+            return {'total_killed': 0, 'total_attempted': len(to_kill)}
+        
+        success_count = 0
+        for process_name in to_kill:
+            try:
+                # 使用更强力的关闭方式
+                result = subprocess.run(['taskkill', '/IM', process_name, '/F', '/T'],
+                                      capture_output=True, text=True, encoding='gbk')
+                
+                if result.returncode == 0:
+                    success_count += 1
+                else:
+                    # 如果taskkill失败，尝试用wmic强制终止
+                    wmic_result = subprocess.run(['wmic', 'process', 'where', f'name="{process_name}"', 'call', 'terminate'],
+                                               capture_output=True, text=True, encoding='gbk')
+                    if wmic_result.returncode == 0:
                         success_count += 1
-                    
-                except Exception as e:
-                    pass
-            
-            self.tray_icon.showMessage("操作完成", f"成功关闭 {success_count}/{len(to_kill)} 个进程", QSystemTrayIcon.MessageIcon.Information, 3000)
+                
+            except Exception as e:
+                pass
+        
+        return {'total_killed': success_count, 'total_attempted': len(to_kill)}
 
 
 def main():
