@@ -16,11 +16,7 @@ class ProcessManager:
     SYSTEM_PROCESSES = {
         'System', 'svchost.exe', 'explorer.exe', 'winlogon.exe', 'csrss.exe',
         'wininit.exe', 'services.exe', 'lsass.exe', 'spoolsv.exe', 'taskmgr.exe',
-        'conhost.exe', 'dwm.exe', 'rundll32.exe', 'ctfmon.exe', 'winlogon.exe',
-        'smss.exe', 'wininit.exe', 'lsass.exe', 'csrss.exe', 'winlogon.exe',
-        'services.exe', 'spoolsv.exe', 'svchost.exe', 'explorer.exe', 'taskmgr.exe',
-        'conhost.exe', 'dwm.exe', 'rundll32.exe', 'ctfmon.exe', 'winlogon.exe'
-    }
+        'conhost.exe', 'dwm.exe', 'rundll32.exe', 'ctfmon.exe','smss.exe'}
     
     def __init__(self, config_file="config.yaml"):
         self.config_file = config_file
